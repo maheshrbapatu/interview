@@ -1,13 +1,11 @@
-//
-// Created by Mahesh Bapatu on 10/12/23.
-//
 #include <iostream>
 #include <mutex>
 #include <thread>
 #include <vector>
 #include <condition_variable>
+#include <shared_mutex>
 
-std::mutex resource_mutex;
+std::shared_mutex resource_mutex;
 std::mutex queue_mutex;
 std::condition_variable cond_var;
 
@@ -20,11 +18,15 @@ void reader_function(int reader_id) {
         std::unique_lock<std::mutex> lock(queue_mutex);
         // Block readers if there are waiting writers to give priority to writers.
         cond_var.wait(lock, []{ return waiting_writers == 0; });
-        active_readers++;
-    }
 
-    // Read the shared resource
-    std::cout << "Reader " << reader_id << " reads value as " << value << std::endl;
+        // Lock the shared resource for reading
+        std::shared_lock<std::shared_mutex> res_lock(resource_mutex);
+        active_readers++;
+        lock.unlock(); // Unlock queue_mutex as it's no longer needed
+
+        // Read the shared resource
+        std::cout << "Reader " << reader_id << " reads value as " << value << std::endl;
+    }
 
     {
         std::unique_lock<std::mutex> lock(queue_mutex);
@@ -43,11 +45,12 @@ void writer_function(int writer_id, int new_value) {
         // Wait until there are no active readers or writers
         cond_var.wait(lock, []{ return active_readers == 0; });
         waiting_writers--;
-    }
+        lock.unlock(); // Unlock queue_mutex as it's no longer needed
 
-    // Write to the shared resource
-    {
-        std::lock_guard<std::mutex> lock(resource_mutex);
+        // Lock the shared resource for writing
+        std::unique_lock<std::shared_mutex> res_lock(resource_mutex);
+
+        // Write to the shared resource
         value = new_value;
         std::cout << "Writer " << writer_id << " writes value to " << value << std::endl;
     }
