@@ -1,0 +1,6 @@
+# ninja log v5
+1	238	1702186592729114678	CMakeFiles/multi_threading.dir/reader_writer.cpp.o	bcfcb6603bd0385c
+1	238	1702186592729111053	CMakeFiles/multi_threading.dir/rw_priorities.cpp.o	635d57f0331f43a5
+1	663	1702186593155816593	CMakeFiles/multi_threading.dir/mutex_ex.cpp.o	5e7d75eda9181819
+9	518	1702186626726895799	CMakeFiles/multi_threading.dir/main.cpp.o	38289901a6fdc508
+518	556	1702186626768098182	multi_threading	9225be55b2c3f355
