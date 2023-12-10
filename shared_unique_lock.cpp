@@ -10,6 +10,10 @@ std::shared_mutex resource_mutex;
 int value = 0; // Shared resource
 
 void reader_function(int reader_id) {
+    // The std::defer_lock is an argument that can be passed to the constructor of a lock guard
+    // such as std::unique_lock or std::shared_lock to indicate that the mutex should not be locked
+    // immediately upon the construction of the lock guard object.
+    // std::shared_lock<std::shared_mutex> lock(resource_mutex, std::defer_lock);
     std::shared_lock<std::shared_mutex> lock(resource_mutex);
     // Now we have a shared lock, multiple readers can enter this section
     std::cout << "Reader " << reader_id << " reads value as " << value << std::endl;

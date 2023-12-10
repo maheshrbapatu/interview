@@ -15,6 +15,8 @@ int value = 0; // Shared resource
 
 void reader_function(int reader_id) {
     {
+        // take unique lock before the entering the conditional variable,
+        // it needs mutex to check the state of waiting writers.
         std::unique_lock<std::mutex> lock(queue_mutex);
         // Block readers if there are waiting writers to give priority to writers.
         cond_var.wait(lock, []{ return waiting_writers == 0; });
@@ -41,6 +43,7 @@ void reader_function(int reader_id) {
 void writer_function(int writer_id, int new_value) {
     {
         std::unique_lock<std::mutex> lock(queue_mutex);
+        // increment writer immediately this will help will be helpful to block all the readers immediately.
         waiting_writers++;
         // Wait until there are no active readers or writers
         cond_var.wait(lock, []{ return active_readers == 0; });

@@ -5,11 +5,10 @@
 #include <shared_mutex>
 #include <thread>
 #include <vector>
-#include <atomic>
 
 std::shared_mutex resource_mutex;
 std::mutex queue_mutex;
-std::atomic<int> readers_count{0}; // Counter for the number of active readers
+int readers_count = 0; // Counter for the number of active readers
 int value = 0; // Shared resource
 
 void reader_function(int reader_id) {
