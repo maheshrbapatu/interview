@@ -1,90 +1,94 @@
 #include <iostream>
-#include <mutex>
 #include <thread>
-#include <vector>
+#include <mutex>
 #include <condition_variable>
-#include <shared_mutex>
+#include <vector>
+#include <chrono>
 
-std::shared_mutex resource_mutex;
-std::mutex queue_mutex;
-std::condition_variable cond_var;
+class RWLockWriterPriority {
+private:
+    std::mutex m_;
+    std::condition_variable cv_;
+    int activeReaders_ = 0;
+    bool writerActive_ = false;
+    int waitingWriters_ = 0; // key for writer priority
 
-int active_readers = 0;
-int waiting_writers = 0;
-int value = 0; // Shared resource
-
-void reader_function(int reader_id) {
-    {
-        // take unique lock before the entering the conditional variable,
-        // it needs mutex to check the state of waiting writers.
-        std::unique_lock<std::mutex> lock(queue_mutex);
-        // Block readers if there are waiting writers to give priority to writers.
-        cond_var.wait(lock, []{ return waiting_writers == 0; });
-
-        // Lock the shared resource for reading
-        std::shared_lock<std::shared_mutex> res_lock(resource_mutex);
-        active_readers++;
-        lock.unlock(); // Unlock queue_mutex as it's no longer needed
-
-        // Read the shared resource
-        std::cout << "Reader " << reader_id << " reads value as " << value << std::endl;
+public:
+    void lock_read() {
+        std::unique_lock<std::mutex> lk(m_);
+        // Writer priority: if any writer is waiting, block new readers
+        cv_.wait(lk, [&] { return !writerActive_ && waitingWriters_ == 0; });
+        ++activeReaders_;
     }
 
-    {
-        std::unique_lock<std::mutex> lock(queue_mutex);
-        active_readers--;
-        // If this was the last reader, notify writers
-        if (active_readers == 0) {
-            cond_var.notify_all();
+    void unlock_read() {
+        std::unique_lock<std::mutex> lk(m_);
+        --activeReaders_;
+        if (activeReaders_ == 0) {
+            cv_.notify_all();
         }
+    }
+
+    void lock_write() {
+        std::unique_lock<std::mutex> lk(m_);
+        ++waitingWriters_;
+        cv_.wait(lk, [&] { return !writerActive_ && activeReaders_ == 0; });
+        --waitingWriters_;
+        writerActive_ = true;
+    }
+
+    void unlock_write() {
+        std::unique_lock<std::mutex> lk(m_);
+        writerActive_ = false;
+        cv_.notify_all();
+    }
+};
+
+// Global lock instance
+RWLockWriterPriority rwlock;
+
+// Simulated reader: will get blocked once writers show up (writer priority)
+void reader_function(int id) {
+    for (int i = 0; i < 5; ++i) {
+        rwlock.lock_read();
+        std::cout << "[Reader " << id << "] reading...\n";
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        rwlock.unlock_read();
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 }
 
-void writer_function(int writer_id, int new_value) {
-    {
-        std::unique_lock<std::mutex> lock(queue_mutex);
-        // increment writer immediately this will help will be helpful to block all the readers immediately.
-        waiting_writers++;
-        // Wait until there are no active readers or writers
-        cond_var.wait(lock, []{ return active_readers == 0; });
-        waiting_writers--;
-        lock.unlock(); // Unlock queue_mutex as it's no longer needed
+// Simulated writer: writers should cut in front of new readers
+void writer_function(int id, int value) {
+    // Stagger writers so they arrive while readers are active
+    std::this_thread::sleep_for(std::chrono::milliseconds(150 + id * 100));
 
-        // Lock the shared resource for writing
-        std::unique_lock<std::shared_mutex> res_lock(resource_mutex);
+    rwlock.lock_write();
+    std::cout << ">>> [Writer " << id << "] writing value " << value << "\n";
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    rwlock.unlock_write();
 
-        // Write to the shared resource
-        value = new_value;
-        std::cout << "Writer " << writer_id << " writes value to " << value << std::endl;
-    }
-
-    // Notify other writers and readers that they may proceed
-    cond_var.notify_all();
+    std::cout << "<<< [Writer " << id << "] done\n";
 }
 
 int main() {
     std::vector<std::thread> readers;
     std::vector<std::thread> writers;
 
-    // Create writer threads
-    for (int i = 0; i < 2; ++i) {
-        writers.push_back(std::thread(writer_function, i, i * 10));
-    }
-
-    // Create reader threads
+    // Start readers first
     for (int i = 0; i < 5; ++i) {
-        readers.push_back(std::thread(reader_function, i));
+        readers.emplace_back(reader_function, i);
     }
 
-    // Join the writer threads with the main thread
-    for (auto& writer : writers) {
-        writer.join();
+    // Start writers
+    for (int i = 0; i < 3; ++i) {
+        writers.emplace_back(writer_function, i, i * 10);
     }
 
-    // Join the reader threads with the main thread
-    for (auto& reader : readers) {
-        reader.join();
-    }
+    for (auto& r : readers) r.join();
+    for (auto& w : writers) w.join();
 
+    std::cout << "All threads finished.\n";
     return 0;
 }
