@@ -1,104 +1,201 @@
 //
 // Created by Mahesh Bapatu on 10/12/23.
 //
-/*
- * ReadWriteLock with Upgrade and Downgrade: Some implementations of read-write locks
- * allow a reader to "upgrade" to a writer (if they decide they need to write) and a writer to "downgrade" to a reader
- * (after they're done writing). This can be useful for reducing lock contention when the role of a thread may change
- * over time.
- */
 #include <iostream>
-#include <shared_mutex>
 #include <thread>
+#include <mutex>
+#include <condition_variable>
 #include <vector>
+#include <chrono>
+#include <atomic>
 
-std::shared_mutex resource_mutex;
-int value = 0; // Shared resource
+class UpgradableRWLock {
+private:
+    std::mutex m_;
+    std::condition_variable cv_;
 
-void reader_function(int reader_id) {
-    std::shared_lock<std::shared_mutex> lock(resource_mutex);
-    // Reading the shared resource with shared lock
-    std::cout << "Reader " << reader_id << " reads value as " << value << std::endl;
-    // Shared lock is released when lock goes out of scope
+    int activeReaders_ = 0;       // number of shared readers holding the lock
+    bool writerActive_ = false;   // a writer currently holds the lock
+
+    bool upgraderActive_ = false; // at most one "upgradeable reader" at a time
+    int waitingWriters_ = 0;      // optional: helps avoid writer starvation
+
+public:
+    // ----- Shared Read -----
+    void lock_read() {
+        std::unique_lock<std::mutex> lk(m_);
+        // Block if a writer is active or an upgrader is trying to upgrade? (not necessary)
+        // For cleanliness: block only on active writer.
+        cv_.wait(lk, [&] { return !writerActive_; });
+        ++activeReaders_;
+    }
+
+    void unlock_read() {
+        std::unique_lock<std::mutex> lk(m_);
+        --activeReaders_;
+        if (activeReaders_ == 0) cv_.notify_all();
+    }
+
+    // ----- Upgradeable Read (only one upgrader at a time) -----
+    void lock_upgrade() {
+        std::unique_lock<std::mutex> lk(m_);
+        // Wait until no writer is active, and no other upgrader exists.
+        // (We allow other readers concurrently.)
+        cv_.wait(lk, [&] { return !writerActive_ && !upgraderActive_; });
+        upgraderActive_ = true;
+        ++activeReaders_; // upgrader also counts as a reader while in upgrade mode
+    }
+
+    void unlock_upgrade() {
+        std::unique_lock<std::mutex> lk(m_);
+        // Still holding read share, just like a reader
+        --activeReaders_;
+        upgraderActive_ = false;
+        if (activeReaders_ == 0) cv_.notify_all();
+        else cv_.notify_all(); // allow waiting upgrader/writer to re-check
+    }
+
+    // Convert upgradeable-read -> write
+    // Precondition: caller holds "upgrade lock" (i.e., lock_upgrade() was called and not released).
+    void upgrade_to_write() {
+        std::unique_lock<std::mutex> lk(m_);
+
+        // We are currently counted in activeReaders_ as one reader.
+        // To become a writer, we must be the ONLY reader and no writer active.
+        ++waitingWriters_;
+        cv_.wait(lk, [&] {
+            return !writerActive_ && activeReaders_ == 1; // only "me" remains
+        });
+        --waitingWriters_;
+
+        // Drop our reader share and become writer.
+        --activeReaders_;
+        writerActive_ = true;
+
+        // We keep upgraderActive_ = true? Two reasonable choices:
+        // - Keep it true until we downgrade/unlock, so no other upgrader enters.
+        // This is simplest and avoids odd interleavings.
+    }
+
+    // Convert write -> read (downgrade)
+    // Precondition: caller holds write lock (writerActive_ == true for this thread)
+    // Postcondition: caller holds a shared read lock (and upgrader slot is released).
+    void downgrade_to_read() {
+        std::unique_lock<std::mutex> lk(m_);
+        // Become a reader first (so there is no gap where nobody holds state)
+        ++activeReaders_;
+
+        // Release writer exclusivity
+        writerActive_ = false;
+
+        // If we came from an upgrade path, release the upgrader slot now
+        if (upgraderActive_) upgraderActive_ = false;
+
+        cv_.notify_all();
+    }
+
+    // ----- Exclusive Write -----
+    void lock_write() {
+        std::unique_lock<std::mutex> lk(m_);
+        ++waitingWriters_;
+
+        // Writer-priority-ish: block readers if writers are waiting (handled in lock_read only if you want).
+        // Here: wait for no writer and no readers and no upgrader.
+        cv_.wait(lk, [&] {
+            return !writerActive_ && activeReaders_ == 0 && !upgraderActive_;
+        });
+
+        --waitingWriters_;
+        writerActive_ = true;
+    }
+
+    void unlock_write() {
+        std::unique_lock<std::mutex> lk(m_);
+        writerActive_ = false;
+        cv_.notify_all();
+    }
+};
+
+// ---------------- Demo ----------------
+UpgradableRWLock rw;
+int sharedValue = 0;
+std::atomic<bool> stopFlag{false};
+
+void reader_thread(int id) {
+    while (!stopFlag.load()) {
+        rw.lock_read();
+        int v = sharedValue;
+        std::cout << "[R" << id << "] read " << v << "\n";
+        rw.unlock_read();
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    }
 }
 
-void writer_function(int writer_id, int new_value) {
-    std::unique_lock<std::shared_mutex> lock(resource_mutex);
-    // Writing to the shared resource with exclusive lock
-    value = new_value;
-    std::cout << "Writer " << writer_id << " writes value to " << value << std::endl;
-    // Exclusive lock is released when lock goes out of scope
+void writer_thread(int id, int iters) {
+    for (int i = 0; i < iters; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        rw.lock_write();
+        int before = sharedValue;
+        sharedValue = before + 10;
+        std::cout << ">>> [W" << id << "] wrote " << before << " -> " << sharedValue << "\n";
+        rw.unlock_write();
+    }
 }
 
-// Function to upgrade from reader to writer
-void upgrade_function(int reader_id) {
-    // First, acquire a shared lock
-    std::shared_lock<std::shared_mutex> shared_lock(resource_mutex);
-    std::cout << "Reader " << reader_id << " preparing to upgrade." << std::endl;
+void upgrader_thread(int id) {
+    // read -> upgrade -> write -> downgrade -> read
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
-    // Upgrade: release shared lock and acquire exclusive lock
-    shared_lock.unlock();
-    std::unique_lock<std::shared_mutex> exclusive_lock(resource_mutex);
+    rw.lock_upgrade();
+    std::cout << "[U" << id << "] upgrade-read sees " << sharedValue << "\n";
 
-    // Now we have exclusive access
-    value *= 2; // Example operation: double the value
-    std::cout << "Upgrader " << reader_id << " upgraded and doubled value to " << value << std::endl;
+    // simulate doing some work while shared-reading
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
-    // Exclusive lock will be released when going out of scope
-}
+    std::cout << "[U" << id << "] attempting upgrade_to_write...\n";
+    rw.upgrade_to_write(); // now exclusive
+    int before = sharedValue;
+    sharedValue = before + 1;
+    std::cout << ">>> [U" << id << "] upgraded & wrote " << before << " -> " << sharedValue << "\n";
 
-// Function to downgrade from writer to reader
-void downgrade_function(int writer_id, int new_value) {
-    // First, acquire an exclusive lock
-    std::unique_lock<std::shared_mutex> exclusive_lock(resource_mutex);
-    value = new_value;
-    std::cout << "Writer " << writer_id << " preparing to downgrade after writing value to " << value << std::endl;
+    // keep exclusive for a bit
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
 
-    // Downgrade: release exclusive lock and acquire shared lock
-    exclusive_lock.unlock();
-    std::shared_lock<std::shared_mutex> shared_lock(resource_mutex);
+    std::cout << "[U" << id << "] downgrading to read...\n";
+    rw.downgrade_to_read(); // now shared read
+    std::cout << "[U" << id << "] after downgrade read sees " << sharedValue << "\n";
+    rw.unlock_read(); // because downgrade_to_read gives you a read lock
 
-    // Now we have shared access
-    std::cout << "Downgrader " << writer_id << " downgraded and reads value as " << value << std::endl;
-
-    // Shared lock will be released when going out of scope
+    // done
 }
 
 int main() {
-    std::vector<std::thread> readers;
-    std::vector<std::thread> writers;
-    std::vector<std::thread> upgraders;
-    std::vector<std::thread> downgraders;
+    std::vector<std::thread> threads;
 
-    // Create reader threads
-    for (int i = 0; i < 5; ++i) {
-        readers.push_back(std::thread(reader_function, i));
-    }
+    // Readers
+    for (int i = 0; i < 3; ++i) threads.emplace_back(reader_thread, i);
 
-    // Create writer and upgrade threads
-    for (int i = 0; i < 2; ++i) {
-        writers.push_back(std::thread(writer_function, i, i * 10));
-        upgraders.push_back(std::thread(upgrade_function, i));
-    }
+    // One upgrader
+    threads.emplace_back(upgrader_thread, 0);
 
-    // Create downgrader threads
-    for (int i = 0; i < 2; ++i) {
-        downgraders.push_back(std::thread(downgrade_function, i, i * 100));
+    // Writers
+    threads.emplace_back(writer_thread, 0, 3);
+    threads.emplace_back(writer_thread, 1, 3);
+
+    // Wait writers/upgrader, then stop readers
+    for (auto& t : threads) {
+        // we’ll stop readers after writers finish; simplest: join all non-reader first
+        // but for quick demo, just join all and stop after a while.
+        // (Instead we’ll run for a short time and stop.)
     }
 
-    // Join the threads with the main thread
-    for (auto& reader : readers) {
-        reader.join();
-    }
-    for (auto& writer : writers) {
-        writer.join();
-    }
-    for (auto& upgrader : upgraders) {
-        upgrader.join();
-    }
-    for (auto& downgrader : downgraders) {
-        downgrader.join();
-    }
+    // Run for a bit then stop readers
+    std::this_thread::sleep_for(std::chrono::seconds(3));
+    stopFlag.store(true);
 
+    for (auto& t : threads) t.join();
+
+    std::cout << "Final sharedValue = " << sharedValue << "\n";
     return 0;
 }
