@@ -1,12 +1,23 @@
-class Car {
-public:
-    int wheels = 0;
+class File {
+    string name;
+    int permission; 
+    friend class BuildFile;
 };
 
-class CarBuilder {
-    Car c;
-public:
-    CarBuilder& setWheels(int w) { c.wheels = w; return *this; }
-    Car build() { return c; }
+class BuildFile {
+    File f;
+    public: 
+        BuildFile& setName(string name) {
+            f.name = name;
+            return *this;
+        }
+        
+        BuildFile& setPermission(int perm) {
+            f.permission = perm;
+            return *this;
+        }
+        
+        File build() {
+            return f;
+        }
 };
-`
