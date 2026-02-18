@@ -22,6 +22,9 @@ int main() {
     Calculator c;
 
     /******** 1) MEMBER FUNCTION POINTER ********/
+    
+    // return_type (*pointer_name)(parameter_types);
+    
     // invoke IS needed here (member function pointers can't be called like a normal function)
     auto mfp = &Calculator::add;
     cout << "member ptr + invoke: " << std::invoke(mfp, c, 3, 4) << "\n";
