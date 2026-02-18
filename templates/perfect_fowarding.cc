@@ -14,6 +14,40 @@ Key tools:
 2. std::forward<T>(x)           -> preserves original value category
 */
 
+   /*
+    PERFECT FORWARDING – LVALUE CASE EXPLANATION
+
+    Suppose caller does:
+        int a = 10;
+        good_wrapper(a);
+
+    1. Template Deduction:
+       'a' is an LVALUE int
+       So compiler deduces:
+           T = int&
+
+    2. Parameter Type Formation:
+       Function parameter is T&&
+       Substitute T = int&:
+           T&&  →  int& &&
+       Reference collapsing rule:
+           & + &&  →  &
+       So parameter becomes:
+           int& x   (still an lvalue reference)
+
+    3. std::forward<T>(x):
+       Here T = int&
+       std::forward<int&>(x) returns int&
+       (NOT an rvalue, no move)
+
+    Result:
+       The original lvalue nature is preserved.
+       If process(int&) exists, that overload is called.
+
+    Key Idea:
+       Caller lvalue → T deduced as reference → std::forward restores lvalue.
+    */
+
 #include <iostream>
 #include <utility>
 using namespace std;
