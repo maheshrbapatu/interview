@@ -1,21 +1,24 @@
-#include <iostream>
+class Singleton {
+private:
+    Singleton() = default;
+    ~Singleton() = default;
 
-class Logger {
+    Singleton(const Singleton&) = delete;
+    Singleton& operator=(const Singleton&) = delete;
+    Singleton(Singleton&&) = delete;
+    Singleton& operator=(Singleton&&) = delete;
+
 public:
-    static Logger& instance() {
-        static Logger inst;   // thread-safe since C++11
-        return inst;
+    static Singleton& instance() {
+        static Singleton obj;   // created once, lazy, thread-safe (C++11+)
+        return obj;
     }
 
-    void log(const std::string& s) { std::cout << s << "\n"; }
-
-private:
-    Logger() = default;
-    Logger(const Logger&) = delete;
-    Logger& operator=(const Logger&) = delete;
+    void foo() {
+        // ...
+    }
 };
 
 int main() {
-    Logger::instance().log("hello");
+    Singleton::instance().foo();
 }
-
