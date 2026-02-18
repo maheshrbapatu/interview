@@ -19,6 +19,11 @@ int main() {
     // Call using function pointer
     int r2 = fp(2, 3);
 
+    // 3. std::function
+    std::function<int(int,int)> f = add;
+    int r3 = f(2, 3);
+
     cout << "Normal call: " << r1 << "\n";
     cout << "Pointer call: " << r2 << "\n";
+    cout << "std::fucntion call: " << r3 << "\n";
 }
