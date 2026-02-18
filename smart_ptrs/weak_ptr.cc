@@ -6,13 +6,13 @@ int main() {
     weak_ptr<int> wp;
 
     {
-        auto sp = make_shared<int>(42);
-        wp = sp;   // weak_ptr observes, does not own
+        auto sp = make_shared<int>(10); // object created
+        wp = sp;                        // weak observes
 
-        if (auto locked = wp.lock()) {
+        if (auto locked = wp.lock()) {  // try to get shared_ptr
             cout << "Value: " << *locked << "\n";
         }
-    } // sp goes out of scope → object destroyed
+    } // sp destroyed → object gone
 
     if (auto locked = wp.lock()) {
         cout << "Still alive\n";
