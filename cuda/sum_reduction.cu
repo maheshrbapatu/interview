@@ -17,11 +17,50 @@
     Each block reduces its portion of the input array
     and writes one value to the output array.
 
-    (0+4) (1+5) (2+6) (3+7)
+    /*
+Example: blockDim.x = 8
 
-    ((0+4)+(2+6))  ((1+5)+(3+7))
+Initial shared memory (sdata):
 
-    final sum
+Index:   0  1  2  3  4  5  6  7
+Value:   1  2  3  4  5  6  7  8
+
+Goal: compute total sum = 36
+
+------------------------------------
+Iteration 1:
+s = 8/2 = 4
+
+Threads tid < 4 run:
+sdata[0] += sdata[4] → 1 + 5 = 6
+sdata[1] += sdata[5] → 2 + 6 = 8
+sdata[2] += sdata[6] → 3 + 7 = 10
+sdata[3] += sdata[7] → 4 + 8 = 12
+
+Now sdata:
+[6, 8, 10, 12, 5, 6, 7, 8]
+
+------------------------------------
+Iteration 2:
+s = 4/2 = 2
+
+Threads tid < 2 run:
+sdata[0] += sdata[2] → 6 + 10 = 16
+sdata[1] += sdata[3] → 8 + 12 = 20
+
+Now sdata:
+[16, 20, 10, 12, 5, 6, 7, 8]
+
+------------------------------------
+Iteration 3:
+s = 2/2 = 1
+
+Thread tid < 1 (only thread 0):
+sdata[0] += sdata[1] → 16 + 20 = 36
+
+Final:
+sdata[0] = 36  (block's total sum)
+*/
 */
 __global__ void reduce(float* input, float* output, int n)
 {
