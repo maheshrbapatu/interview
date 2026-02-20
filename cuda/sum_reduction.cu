@@ -17,7 +17,7 @@
     Each block reduces its portion of the input array
     and writes one value to the output array.
 
-    /*
+
 Example: blockDim.x = 8
 
 Initial shared memory (sdata):
