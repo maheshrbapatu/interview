@@ -16,6 +16,12 @@
     Kernel: Block-level parallel reduction.
     Each block reduces its portion of the input array
     and writes one value to the output array.
+
+    (0+4) (1+5) (2+6) (3+7)
+
+    ((0+4)+(2+6))  ((1+5)+(3+7))
+
+    final sum
 */
 __global__ void reduce(float* input, float* output, int n)
 {
