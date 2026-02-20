@@ -61,7 +61,7 @@ sdata[0] += sdata[1] → 16 + 20 = 36
 Final:
 sdata[0] = 36  (block's total sum)
 */
-*/
+
 __global__ void reduce(float* input, float* output, int n)
 {
     // Dynamically allocated shared memory
